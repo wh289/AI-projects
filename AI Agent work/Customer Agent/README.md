@@ -6,7 +6,7 @@ orchestrator is a library that a UI and an eval harness can both drive.
 The architectural claim this codebase exists to demonstrate: **the orchestrator
 owns the loop and enforces deterministic policy; the model proposes but does
 not decide or execute.**
-
+Primary purpose of this piece of work is for my own understanding
 ---
 
 ## Setup (Windows / PowerShell)
