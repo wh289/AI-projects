@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 from typing import Any, Optional
 
-from . import tools
+from . import tools, fixtures
 from .models import ConversationState, ToolCall, ToolOutcome
 
 
@@ -109,7 +109,70 @@ def execute(call: ToolCall, state: ConversationState) -> ToolOutcome:
 
     Return a ToolOutcome in every path. No exceptions escape this function.
     """
-    raise NotImplementedError("GAP 3")
+    # Stage 1: schema validation
+    error = validate_arguments(call.name, call.arguments)
+    if error is not None:
+        return ToolOutcome(
+            tool_use_id=call.tool_use_id,
+            ok=False,
+            payload={"error": error},
+            error_code="invalid_arguments",
+        )
+    
+    required = tools.TOOL_PRECONDITIONS.get(call.name,set())
+    missing = required - set(state.tools_called)
+    if missing:
+        return ToolOutcome(
+            tool_use_id=call.tool_use_id,
+            ok=False,
+            payload={"error": f"Call {sorted(missing)} before {call.name}."},
+            error_code="precondition_failed",
+        )
+    
+    if "order_id" in call.arguments:
+        order = fixtures.get_order(call.arguments["order_id"])
+        not_found = order is None       # True if order is None
+        wrong_owner = order is not None and order.customer_id != state.customer_id      # True if order exists but order.customer_id != state.customer_id
+        if not_found or wrong_owner:
+            return ToolOutcome(
+                tool_use_id=call.tool_use_id,
+                ok=False,
+                payload={"error": "Order not found"},   # must be IDENTICAL text whichever branch fired
+                error_code="not_authorised",
+            )
+        
+    if call.name in tools.MUTATING_TOOLS and "idempotency_key" in call.arguments:
+        key = call.arguments["idempotency_key"]
+        if key in state.idempotency_cache:
+            cached = state.idempotency_cache[key]
+            return ToolOutcome(
+                tool_use_id=call.tool_use_id,      # the NEW call's id, not the cached one
+                ok=cached.ok,
+                payload=cached.payload,
+                error_code=cached.error_code,
+                replayed=True,
+            )
+        
+    try:
+        outcome = tools.HANDLERS[call.name](call.arguments, state)
+        state.tools_called.append(call.name)
+        result = ToolOutcome(
+            tool_use_id=call.tool_use_id, 
+            ok=True, 
+            payload=outcome, 
+        )
+
+        if call.name in tools.MUTATING_TOOLS and "idempotency_key" in call.arguments:
+            key = call.arguments["idempotency_key"]
+            state.idempotency_cache[key] = result
+        return result
+    except Exception as e:
+        return ToolOutcome(
+            tool_use_id=call.tool_use_id, 
+            ok=False, 
+            payload={"error": str(e)}, 
+            error_code="tool_failed"
+        )
 
 
 # --------------------------------------------------------------------------
