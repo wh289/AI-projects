@@ -1,0 +1,111 @@
+{
+  "name": "Job Search - Weekly Digest",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "weeks",
+              "triggerAtDay": [1],
+              "triggerAtHour": 8,
+              "triggerAtMinute": 0
+            }
+          ]
+        }
+      },
+      "id": "trigger-weekly",
+      "name": "Mondays 08:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [-400, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.notion.com/v1/databases/{{ $env.NOTION_DATABASE_ID }}/query",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.NOTION_TOKEN }}"
+            },
+            {
+              "name": "Notion-Version",
+              "value": "2022-06-28"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ page_size: 100, sorts: [{ property: 'Score', direction: 'descending' }], filter: { timestamp: 'created_time', created_time: { past_week: {} } } }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "notion-week",
+      "name": "Notion: this week's jobs",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-180, 300],
+      "notes": "Filters on Notion's created_time, so this reflects when the job was stored, not when it was posted."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Flatten Notion's property shape back into plain fields.\nconst text = p => p?.rich_text?.[0]?.plain_text ?? '';\nconst pages = $input.first().json.results ?? [];\n\nconst jobs = pages.map(p => {\n  const props = p.properties ?? {};\n  return {\n    title: props['Title']?.title?.[0]?.plain_text ?? 'Untitled',\n    company: text(props['Company']),\n    location: text(props['Location']),\n    url: props['URL']?.url ?? '',\n    score: props['Score']?.number ?? 0,\n    salaryBand: props['Salary Band']?.select?.name ?? 'Unknown',\n    salaryMin: props['Salary Min']?.number ?? null,\n    salaryMax: props['Salary Max']?.number ?? null,\n    reason: text(props['Why']),\n    source: props['Source']?.select?.name ?? '',\n  };\n});\n\nif (jobs.length === 0) return [];\nreturn [{ json: { jobs, count: jobs.length } }];"
+      },
+      "id": "flatten",
+      "name": "Flatten Notion rows",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [40, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const { jobs, count } = $input.first().json;\nconst target = jobs.filter(j => j.salaryBand === 'Target (100k+)');\n\nconst row = j => `<tr>\n  <td style=\"padding:8px;border-bottom:1px solid #eee\"><b>${j.score}</b></td>\n  <td style=\"padding:8px;border-bottom:1px solid #eee\"><a href=\"${j.url}\">${j.title}</a><br><small>${j.company} - ${j.location} - ${j.source}</small></td>\n  <td style=\"padding:8px;border-bottom:1px solid #eee\">${j.salaryBand}<br><small>${j.salaryMin ?? '?'} - ${j.salaryMax ?? '?'}</small></td>\n  <td style=\"padding:8px;border-bottom:1px solid #eee\"><small>${j.reason}</small></td>\n</tr>`;\n\nconst html = `<h2>This week: ${count} role${count === 1 ? '' : 's'}</h2>\n<p>${target.length} in the 100k+ band.</p>\n<table style=\"border-collapse:collapse;font-family:sans-serif;font-size:14px\">\n<tr><th align=\"left\">Score</th><th align=\"left\">Role</th><th align=\"left\">Salary</th><th align=\"left\">Why</th></tr>\n${jobs.map(row).join('')}\n</table>`;\n\nreturn [{ json: { html, count } }];"
+      },
+      "id": "build-weekly",
+      "name": "Build weekly digest",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [260, 300]
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $env.DIGEST_EMAIL_TO }}",
+        "subject": "=Weekly job round-up: {{ $json.count }} roles",
+        "emailFormat": "html",
+        "html": "={{ $json.html }}",
+        "options": {}
+      },
+      "id": "email-weekly",
+      "name": "Email weekly digest",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [480, 300]
+    }
+  ],
+  "connections": {
+    "Mondays 08:00": {
+      "main": [[{ "node": "Notion: this week's jobs", "type": "main", "index": 0 }]]
+    },
+    "Notion: this week's jobs": {
+      "main": [[{ "node": "Flatten Notion rows", "type": "main", "index": 0 }]]
+    },
+    "Flatten Notion rows": {
+      "main": [[{ "node": "Build weekly digest", "type": "main", "index": 0 }]]
+    },
+    "Build weekly digest": {
+      "main": [[{ "node": "Email weekly digest", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}

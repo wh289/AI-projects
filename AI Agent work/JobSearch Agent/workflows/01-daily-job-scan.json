@@ -1,0 +1,423 @@
+{
+  "name": "Job Search - Daily Scan",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtHour": 7,
+              "triggerAtMinute": 0
+            }
+          ]
+        }
+      },
+      "id": "trigger-daily",
+      "name": "Every morning 07:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [-1120, 300]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a1",
+              "name": "searchTerms",
+              "value": "={{ [\"AI strategist\", \"AI product manager\", \"machine learning strategy\", \"head of AI\"] }}",
+              "type": "array"
+            },
+            {
+              "id": "a2",
+              "name": "location",
+              "value": "London",
+              "type": "string"
+            },
+            {
+              "id": "a3",
+              "name": "salaryFloor",
+              "value": "={{ 80000 }}",
+              "type": "number"
+            },
+            {
+              "id": "a4",
+              "name": "salaryTarget",
+              "value": "={{ 100000 }}",
+              "type": "number"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "config",
+      "name": "Search Criteria",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [-900, 300],
+      "notes": "Edit your search terms and salary bands here - nothing downstream hard-codes them."
+    },
+    {
+      "parameters": {
+        "fileSelector": "/cv/cv.txt",
+        "options": {}
+      },
+      "id": "read-cv",
+      "name": "Read CV",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [-680, 300]
+    },
+    {
+      "parameters": {
+        "operation": "text",
+        "destinationKey": "cvText",
+        "options": {}
+      },
+      "id": "cv-to-text",
+      "name": "CV to text",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1,
+      "position": [-460, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// One item per search term, so each gets its own API call downstream.\nconst cfg = $('Search Criteria').first().json;\nconst cvText = $('CV to text').first().json.cvText;\n\nreturn cfg.searchTerms.map(term => ({\n  json: {\n    term,\n    location: cfg.location,\n    salaryFloor: cfg.salaryFloor,\n    salaryTarget: cfg.salaryTarget,\n    cvText,\n  }\n}));"
+      },
+      "id": "fan-out",
+      "name": "One item per search term",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-240, 300]
+    },
+    {
+      "parameters": {
+        "url": "https://www.reed.co.uk/api/1.0/search",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "keywords",
+              "value": "={{ $json.term }}"
+            },
+            {
+              "name": "locationName",
+              "value": "={{ $json.location }}"
+            },
+            {
+              "name": "minimumSalary",
+              "value": "={{ $json.salaryFloor }}"
+            },
+            {
+              "name": "resultsToTake",
+              "value": "100"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "reed",
+      "name": "Reed API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-20, 180],
+      "notes": "Basic auth: username = your Reed API key, password = blank."
+    },
+    {
+      "parameters": {
+        "url": "=https://api.adzuna.com/v1/api/jobs/gb/search/1",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "app_id",
+              "value": "={{ $env.ADZUNA_APP_ID }}"
+            },
+            {
+              "name": "app_key",
+              "value": "={{ $env.ADZUNA_APP_KEY }}"
+            },
+            {
+              "name": "what",
+              "value": "={{ $json.term }}"
+            },
+            {
+              "name": "where",
+              "value": "={{ $json.location }}"
+            },
+            {
+              "name": "salary_min",
+              "value": "={{ $json.salaryFloor }}"
+            },
+            {
+              "name": "results_per_page",
+              "value": "50"
+            },
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "adzuna",
+      "name": "Adzuna API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-20, 420]
+    },
+    {
+      "parameters": {
+        "mode": "append",
+        "numberInputs": 2,
+        "options": {}
+      },
+      "id": "merge-sources",
+      "name": "Merge sources",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [200, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Both APIs return different shapes. Everything downstream depends on one\n// schema, so normalise here and nowhere else.\nconst out = [];\nconst seen = new Set();\n\nfor (const item of $input.all()) {\n  const d = item.json;\n\n  // Reed\n  for (const r of (d.results ?? [])) {\n    if (r.jobId === undefined) continue;\n    const id = `reed-${r.jobId}`;\n    if (seen.has(id)) continue;\n    seen.add(id);\n    out.push({ json: {\n      externalId: id,\n      source: 'Reed',\n      title: r.jobTitle,\n      company: r.employerName,\n      location: r.locationName,\n      url: r.jobUrl,\n      description: (r.jobDescription ?? '').replace(/<[^>]*>/g, '').slice(0, 2000),\n      salaryMin: r.minimumSalary ?? null,\n      salaryMax: r.maximumSalary ?? null,\n      postedAt: r.date ?? null,\n    }});\n  }\n\n  // Adzuna\n  for (const a of (d.results ?? [])) {\n    if (a.id === undefined || a.jobId !== undefined) continue;\n    const id = `adzuna-${a.id}`;\n    if (seen.has(id)) continue;\n    seen.add(id);\n    out.push({ json: {\n      externalId: id,\n      source: 'Adzuna',\n      title: a.title,\n      company: a.company?.display_name ?? 'Unknown',\n      location: a.location?.display_name ?? '',\n      url: a.redirect_url,\n      description: (a.description ?? '').replace(/<[^>]*>/g, '').slice(0, 2000),\n      salaryMin: a.salary_min ?? null,\n      salaryMax: a.salary_max ?? null,\n      postedAt: a.created ?? null,\n    }});\n  }\n}\n\nreturn out;"
+      },
+      "id": "normalise",
+      "name": "Normalise to one schema",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [420, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.notion.com/v1/databases/{{ $env.NOTION_DATABASE_ID }}/query",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.NOTION_TOKEN }}"
+            },
+            {
+              "name": "Notion-Version",
+              "value": "2022-06-28"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ page_size: 100 }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "notion-existing",
+      "name": "Notion: jobs already seen",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [640, 300],
+      "executeOnce": true,
+      "notes": "Reads the DB so the next node can drop anything already stored. This is what makes the daily email 'new jobs only'."
+    },
+    {
+      "parameters": {
+        "jsCode": "// The dedupe step. Anything already in Notion is dropped here, which is why\n// the daily digest only ever contains genuinely new postings.\nconst existing = new Set();\nfor (const page of ($input.first().json.results ?? [])) {\n  const idProp = page.properties?.['External ID'];\n  const val = idProp?.rich_text?.[0]?.plain_text;\n  if (val) existing.add(val);\n}\n\nconst jobs = $('Normalise to one schema').all()\n  .map(i => i.json)\n  .filter(j => !existing.has(j.externalId));\n\nif (jobs.length === 0) return [];\nreturn jobs.map(json => ({ json }));"
+      },
+      "id": "dedupe",
+      "name": "Drop jobs already stored",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [860, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Batch the jobs into one prompt rather than one call per job: cheaper, and\n// the model can rank consistently when it sees them together.\nconst jobs = $input.all().map(i => i.json);\nconst cvText = $('CV to text').first().json.cvText;\nconst cfg = $('Search Criteria').first().json;\n\nconst summaries = jobs.map((j, i) => `[${i}] ${j.title} at ${j.company} (${j.location})\\nSalary: ${j.salaryMin ?? '?'} - ${j.salaryMax ?? '?'}\\n${j.description.slice(0, 800)}`).join('\\n\\n---\\n\\n');\n\nconst prompt = `Here is a CV:\\n\\n${cvText}\\n\\nThe candidate wants roles matching: ${cfg.searchTerms.join(', ')}. Salaries above ${cfg.salaryTarget} are strongly preferred; ${cfg.salaryFloor}-${cfg.salaryTarget} is acceptable but less attractive.\\n\\nScore each job below from 0-100 for fit against the CV and criteria. Consider seniority, domain overlap, and whether the CV's experience genuinely qualifies them.\\n\\n${summaries}\\n\\nReturn ONLY a JSON array, no prose, of the form:\\n[{\"index\": 0, \"score\": 87, \"reason\": \"one sentence\"}]`;\n\nreturn [{ json: { prompt, jobCount: jobs.length } }];"
+      },
+      "id": "build-prompt",
+      "name": "Build scoring prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1080, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "={{ $env.ANTHROPIC_API_KEY }}"
+            },
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'claude-sonnet-5', max_tokens: 4096, messages: [{ role: 'user', content: $json.prompt }] }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "score",
+      "name": "Score against CV",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1300, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Attach scores back onto the jobs, apply the salary banding, sort best first.\nconst jobs = $('Drop jobs already stored').all().map(i => i.json);\nconst cfg = $('Search Criteria').first().json;\nconst raw = $input.first().json?.content?.[0]?.text ?? '[]';\n\nlet scores = [];\ntry {\n  const match = raw.match(/\\[[\\s\\S]*\\]/);\n  scores = match ? JSON.parse(match[0]) : [];\n} catch (e) {\n  // A malformed model response must not lose the jobs - fall back to unscored.\n  scores = [];\n}\n\nconst byIndex = new Map(scores.map(s => [s.index, s]));\n\nconst scored = jobs.map((j, i) => {\n  const s = byIndex.get(i);\n  const top = j.salaryMax ?? j.salaryMin ?? 0;\n  let band = 'Unknown';\n  if (top >= cfg.salaryTarget) band = 'Target (100k+)';\n  else if (top >= cfg.salaryFloor) band = 'Viable (80-100k)';\n  else if (top > 0) band = 'Below floor';\n\n  // Salary band nudges the ranking but never replaces fit - a perfect role at\n  // 95k should still outrank a poor one at 120k.\n  const bandBonus = band === 'Target (100k+)' ? 5 : 0;\n\n  return {\n    ...j,\n    score: Math.min(100, (s?.score ?? 0) + bandBonus),\n    reason: s?.reason ?? 'Not scored',\n    salaryBand: band,\n  };\n});\n\nscored.sort((a, b) => b.score - a.score);\nreturn scored.map(json => ({ json }));"
+      },
+      "id": "rank",
+      "name": "Rank and band",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1520, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.notion.com/v1/pages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.NOTION_TOKEN }}"
+            },
+            {
+              "name": "Notion-Version",
+              "value": "2022-06-28"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ parent: { database_id: $env.NOTION_DATABASE_ID }, properties: { 'Title': { title: [{ text: { content: $json.title || 'Untitled' } }] }, 'Company': { rich_text: [{ text: { content: $json.company || '' } }] }, 'External ID': { rich_text: [{ text: { content: $json.externalId } }] }, 'Source': { select: { name: $json.source } }, 'Location': { rich_text: [{ text: { content: $json.location || '' } }] }, 'URL': { url: $json.url || null }, 'Score': { number: $json.score }, 'Salary Band': { select: { name: $json.salaryBand } }, 'Salary Min': { number: $json.salaryMin }, 'Salary Max': { number: $json.salaryMax }, 'Why': { rich_text: [{ text: { content: ($json.reason || '').slice(0, 1900) } }] } } }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "notion-write",
+      "name": "Notion: store job",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1740, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build the digest from the ranked list, not from the Notion write results,\n// so a Notion hiccup still gets you the email.\nconst jobs = $('Rank and band').all().map(i => i.json);\nif (jobs.length === 0) return [];\n\nconst row = j => `<tr>\n  <td style=\"padding:8px;border-bottom:1px solid #eee\"><b>${j.score}</b></td>\n  <td style=\"padding:8px;border-bottom:1px solid #eee\"><a href=\"${j.url}\">${j.title}</a><br><small>${j.company} - ${j.location}</small></td>\n  <td style=\"padding:8px;border-bottom:1px solid #eee\">${j.salaryBand}<br><small>${j.salaryMin ?? '?'} - ${j.salaryMax ?? '?'}</small></td>\n  <td style=\"padding:8px;border-bottom:1px solid #eee\"><small>${j.reason}</small></td>\n</tr>`;\n\nconst html = `<h2>${jobs.length} new role${jobs.length === 1 ? '' : 's'} today</h2>\n<table style=\"border-collapse:collapse;font-family:sans-serif;font-size:14px\">\n<tr><th align=\"left\">Score</th><th align=\"left\">Role</th><th align=\"left\">Salary</th><th align=\"left\">Why</th></tr>\n${jobs.map(row).join('')}\n</table>`;\n\nreturn [{ json: { html, count: jobs.length } }];"
+      },
+      "id": "build-email",
+      "name": "Build digest",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1960, 300]
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $env.DIGEST_EMAIL_TO }}",
+        "subject": "={{ $json.count }} new job match{{ $json.count === 1 ? '' : 'es' }}",
+        "emailFormat": "html",
+        "html": "={{ $json.html }}",
+        "options": {}
+      },
+      "id": "email",
+      "name": "Email digest",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [2180, 300],
+      "notes": "Needs SMTP credentials set up in n8n. Gmail: use an app password, not your account password."
+    }
+  ],
+  "connections": {
+    "Every morning 07:00": {
+      "main": [[{ "node": "Search Criteria", "type": "main", "index": 0 }]]
+    },
+    "Search Criteria": {
+      "main": [[{ "node": "Read CV", "type": "main", "index": 0 }]]
+    },
+    "Read CV": {
+      "main": [[{ "node": "CV to text", "type": "main", "index": 0 }]]
+    },
+    "CV to text": {
+      "main": [[{ "node": "One item per search term", "type": "main", "index": 0 }]]
+    },
+    "One item per search term": {
+      "main": [[
+        { "node": "Reed API", "type": "main", "index": 0 },
+        { "node": "Adzuna API", "type": "main", "index": 0 }
+      ]]
+    },
+    "Reed API": {
+      "main": [[{ "node": "Merge sources", "type": "main", "index": 0 }]]
+    },
+    "Adzuna API": {
+      "main": [[{ "node": "Merge sources", "type": "main", "index": 1 }]]
+    },
+    "Merge sources": {
+      "main": [[{ "node": "Normalise to one schema", "type": "main", "index": 0 }]]
+    },
+    "Normalise to one schema": {
+      "main": [[{ "node": "Notion: jobs already seen", "type": "main", "index": 0 }]]
+    },
+    "Notion: jobs already seen": {
+      "main": [[{ "node": "Drop jobs already stored", "type": "main", "index": 0 }]]
+    },
+    "Drop jobs already stored": {
+      "main": [[{ "node": "Build scoring prompt", "type": "main", "index": 0 }]]
+    },
+    "Build scoring prompt": {
+      "main": [[{ "node": "Score against CV", "type": "main", "index": 0 }]]
+    },
+    "Score against CV": {
+      "main": [[{ "node": "Rank and band", "type": "main", "index": 0 }]]
+    },
+    "Rank and band": {
+      "main": [[{ "node": "Notion: store job", "type": "main", "index": 0 }]]
+    },
+    "Notion: store job": {
+      "main": [[{ "node": "Build digest", "type": "main", "index": 0 }]]
+    },
+    "Build digest": {
+      "main": [[{ "node": "Email digest", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}
