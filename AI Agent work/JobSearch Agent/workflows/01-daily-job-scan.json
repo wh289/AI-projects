@@ -1,4 +1,5 @@
 {
+  "id": "PIaidqwWCbffx9EG",
   "name": "Job Search - Daily Scan",
   "nodes": [
     {
@@ -25,7 +26,7 @@
             {
               "id": "a1",
               "name": "searchTerms",
-              "value": "={{ [\"AI strategist\", \"AI product manager\", \"machine learning strategy\", \"head of AI\"] }}",
+              "value": "={{ [\"AI strategist\", \"Forward Deployed Product Manager\", \"AI product manager\", \"machine learning strategy\", \"Data Scientist\", \"Senior Data Analyst\", \"Analytics Manager\", \"Deployment Strategist\"] }}",
               "type": "array"
             },
             {
@@ -37,7 +38,7 @@
             {
               "id": "a3",
               "name": "salaryFloor",
-              "value": "={{ 80000 }}",
+              "value": "={{ 90000 }}",
               "type": "number"
             },
             {
@@ -129,6 +130,9 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [-20, 180],
+      "credentials": {
+        "httpBasicAuth": { "id": "asDeuZ99mCxgBCy7", "name": "Reed auth" }
+      },
       "notes": "Basic auth: username = your Reed API key, password = blank."
     },
     {
@@ -195,7 +199,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Both APIs return different shapes. Everything downstream depends on one\n// schema, so normalise here and nowhere else.\nconst out = [];\nconst seen = new Set();\n\nfor (const item of $input.all()) {\n  const d = item.json;\n\n  // Reed\n  for (const r of (d.results ?? [])) {\n    if (r.jobId === undefined) continue;\n    const id = `reed-${r.jobId}`;\n    if (seen.has(id)) continue;\n    seen.add(id);\n    out.push({ json: {\n      externalId: id,\n      source: 'Reed',\n      title: r.jobTitle,\n      company: r.employerName,\n      location: r.locationName,\n      url: r.jobUrl,\n      description: (r.jobDescription ?? '').replace(/<[^>]*>/g, '').slice(0, 2000),\n      salaryMin: r.minimumSalary ?? null,\n      salaryMax: r.maximumSalary ?? null,\n      postedAt: r.date ?? null,\n    }});\n  }\n\n  // Adzuna\n  for (const a of (d.results ?? [])) {\n    if (a.id === undefined || a.jobId !== undefined) continue;\n    const id = `adzuna-${a.id}`;\n    if (seen.has(id)) continue;\n    seen.add(id);\n    out.push({ json: {\n      externalId: id,\n      source: 'Adzuna',\n      title: a.title,\n      company: a.company?.display_name ?? 'Unknown',\n      location: a.location?.display_name ?? '',\n      url: a.redirect_url,\n      description: (a.description ?? '').replace(/<[^>]*>/g, '').slice(0, 2000),\n      salaryMin: a.salary_min ?? null,\n      salaryMax: a.salary_max ?? null,\n      postedAt: a.created ?? null,\n    }});\n  }\n}\n\nreturn out;"
+        "jsCode": "// Both APIs return different shapes. Everything downstream depends on one\n// schema, so normalise here and nowhere else.\nconst out = [];\nconst seen = new Set();\n\n// Loose key for spotting the same real-world job across sources - Reed and\n// Adzuna never share an ID for the same posting, so exact-ID dedup alone lets\n// the same job through twice.\nconst dedupeKey = (title, company) =>\n  `${(title || '').toLowerCase().trim()}|${(company || '').toLowerCase().trim()}`;\n\nfor (const item of $input.all()) {\n  const d = item.json;\n\n  // Reed\n  for (const r of (d.results ?? [])) {\n    if (r.jobId === undefined) continue;\n    const id = `reed-${r.jobId}`;\n    if (seen.has(id)) continue;\n    seen.add(id);\n    out.push({ json: {\n      externalId: id,\n      dedupeKey: dedupeKey(r.jobTitle, r.employerName),\n      source: 'Reed',\n      title: r.jobTitle,\n      company: r.employerName,\n      location: r.locationName,\n      url: r.jobUrl,\n      description: (r.jobDescription ?? '').replace(/<[^>]*>/g, '').slice(0, 2000),\n      salaryMin: r.minimumSalary ?? null,\n      salaryMax: r.maximumSalary ?? null,\n      postedAt: r.date ?? null,\n    }});\n  }\n\n  // Adzuna\n  for (const a of (d.results ?? [])) {\n    if (a.id === undefined || a.jobId !== undefined) continue;\n    const id = `adzuna-${a.id}`;\n    if (seen.has(id)) continue;\n    seen.add(id);\n    out.push({ json: {\n      externalId: id,\n      dedupeKey: dedupeKey(a.title, a.company?.display_name),\n      source: 'Adzuna',\n      title: a.title,\n      company: a.company?.display_name ?? 'Unknown',\n      location: a.location?.display_name ?? '',\n      url: a.redirect_url,\n      description: (a.description ?? '').replace(/<[^>]*>/g, '').slice(0, 2000),\n      salaryMin: a.salary_min ?? null,\n      salaryMax: a.salary_max ?? null,\n      postedAt: a.created ?? null,\n    }});\n  }\n}\n\n// The same job can legitimately come back from both sources in one run -\n// collapse by dedupeKey so it isn't scored (and billed) twice. Keeps\n// whichever copy was encountered first.\nconst byKey = new Map();\nfor (const item of out) {\n  if (!byKey.has(item.json.dedupeKey)) byKey.set(item.json.dedupeKey, item);\n}\nreturn [...byKey.values()];"
       },
       "id": "normalise",
       "name": "Normalise to one schema",
@@ -205,43 +209,18 @@
     },
     {
       "parameters": {
-        "method": "POST",
-        "url": "=https://api.notion.com/v1/databases/{{ $env.NOTION_DATABASE_ID }}/query",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "Authorization",
-              "value": "=Bearer {{ $env.NOTION_TOKEN }}"
-            },
-            {
-              "name": "Notion-Version",
-              "value": "2022-06-28"
-            }
-          ]
-        },
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ page_size: 100 }) }}",
-        "options": {
-          "response": {
-            "response": {
-              "neverError": true
-            }
-          }
-        }
+        "jsCode": "// Paginate through Notion's query endpoint. A single page_size:100 request\n// silently stops seeing older rows once the database passes 100 entries,\n// which re-introduces duplicates - loop on the cursor until has_more is false.\nconst results = [];\nlet cursor;\n\ndo {\n  const body = { page_size: 100 };\n  if (cursor) body.start_cursor = cursor;\n\n  const res = await this.helpers.httpRequest({\n    method: 'POST',\n    url: `https://api.notion.com/v1/databases/${$env.NOTION_DATABASE_ID}/query`,\n    headers: {\n      'Authorization': `Bearer ${$env.NOTION_TOKEN}`,\n      'Notion-Version': '2022-06-28',\n    },\n    body,\n    json: true,\n  });\n\n  results.push(...(res.results ?? []));\n  cursor = res.has_more ? res.next_cursor : undefined;\n} while (cursor);\n\nreturn [{ json: { results } }];"
       },
       "id": "notion-existing",
       "name": "Notion: jobs already seen",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
       "position": [640, 300],
-      "executeOnce": true,
-      "notes": "Reads the DB so the next node can drop anything already stored. This is what makes the daily email 'new jobs only'."
+      "notes": "Reads the whole DB (paginated) so the next node can drop anything already stored. This is what makes the daily email 'new jobs only'."
     },
     {
       "parameters": {
-        "jsCode": "// The dedupe step. Anything already in Notion is dropped here, which is why\n// the daily digest only ever contains genuinely new postings.\nconst existing = new Set();\nfor (const page of ($input.first().json.results ?? [])) {\n  const idProp = page.properties?.['External ID'];\n  const val = idProp?.rich_text?.[0]?.plain_text;\n  if (val) existing.add(val);\n}\n\nconst jobs = $('Normalise to one schema').all()\n  .map(i => i.json)\n  .filter(j => !existing.has(j.externalId));\n\nif (jobs.length === 0) return [];\nreturn jobs.map(json => ({ json }));"
+        "jsCode": "// The dedupe step. Anything already in Notion is dropped here, which is why\n// the daily digest only ever contains genuinely new postings. Checked on both\n// the exact External ID and a loose title+company key, since the same job\n// posted on two sources never shares an External ID.\nconst existingIds = new Set();\nconst existingKeys = new Set();\nfor (const page of ($input.first().json.results ?? [])) {\n  const idProp = page.properties?.['External ID'];\n  const id = idProp?.rich_text?.[0]?.plain_text;\n  if (id) existingIds.add(id);\n\n  const title = page.properties?.['Title']?.title?.[0]?.plain_text ?? '';\n  const company = page.properties?.['Company']?.rich_text?.[0]?.plain_text ?? '';\n  existingKeys.add(`${title.toLowerCase().trim()}|${company.toLowerCase().trim()}`);\n}\n\nconst jobs = $('Normalise to one schema').all()\n  .map(i => i.json)\n  .filter(j => !existingIds.has(j.externalId) && !existingKeys.has(j.dedupeKey));\n\nif (jobs.length === 0) return [];\nreturn jobs.map(json => ({ json }));"
       },
       "id": "dedupe",
       "name": "Drop jobs already stored",
@@ -278,7 +257,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ model: 'claude-sonnet-5', max_tokens: 4096, messages: [{ role: 'user', content: $json.prompt }] }) }}",
+        "jsonBody": "={{ JSON.stringify({ model: 'claude-haiku-4-5', max_tokens: 16000, messages: [{ role: 'user', content: $json.prompt }] }) }}",
         "options": {
           "response": {
             "response": {
@@ -295,7 +274,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Attach scores back onto the jobs, apply the salary banding, sort best first.\nconst jobs = $('Drop jobs already stored').all().map(i => i.json);\nconst cfg = $('Search Criteria').first().json;\nconst raw = $input.first().json?.content?.[0]?.text ?? '[]';\n\nlet scores = [];\ntry {\n  const match = raw.match(/\\[[\\s\\S]*\\]/);\n  scores = match ? JSON.parse(match[0]) : [];\n} catch (e) {\n  // A malformed model response must not lose the jobs - fall back to unscored.\n  scores = [];\n}\n\nconst byIndex = new Map(scores.map(s => [s.index, s]));\n\nconst scored = jobs.map((j, i) => {\n  const s = byIndex.get(i);\n  const top = j.salaryMax ?? j.salaryMin ?? 0;\n  let band = 'Unknown';\n  if (top >= cfg.salaryTarget) band = 'Target (100k+)';\n  else if (top >= cfg.salaryFloor) band = 'Viable (80-100k)';\n  else if (top > 0) band = 'Below floor';\n\n  // Salary band nudges the ranking but never replaces fit - a perfect role at\n  // 95k should still outrank a poor one at 120k.\n  const bandBonus = band === 'Target (100k+)' ? 5 : 0;\n\n  return {\n    ...j,\n    score: Math.min(100, (s?.score ?? 0) + bandBonus),\n    reason: s?.reason ?? 'Not scored',\n    salaryBand: band,\n  };\n});\n\nscored.sort((a, b) => b.score - a.score);\nreturn scored.map(json => ({ json }));"
+        "jsCode": "// Attach scores back onto the jobs, apply the salary banding, sort best first.\nconst jobs = $('Drop jobs already stored').all().map(i => i.json);\nconst cfg = $('Search Criteria').first().json;\nconst input = $input.first().json;\n\nlet raw = input?.content?.[0]?.text;\nif (raw === undefined) {\n  // No content block usually means the Anthropic call itself errored (bad\n  // model string, auth failure, rate limit) rather than returning a\n  // parseable response - surface the real payload instead of pretending it\n  // was an empty score list.\n  raw = JSON.stringify(input).slice(0, 500);\n}\n\n// Models sometimes wrap the array in a markdown code fence despite being\n// told not to - strip it before parsing, or JSON.parse throws on it.\nraw = raw.replace(/```json\\s*|```\\s*/g, '');\n\nlet scores = [];\nlet parseError = null;\ntry {\n  const match = raw.match(/\\[[\\s\\S]*\\]/);\n  scores = match ? JSON.parse(match[0]) : [];\n} catch (e) {\n  // A malformed model response must not lose the jobs - fall back to\n  // unscored, but keep the failure visible in the reason instead of a mute\n  // 'Not scored' so a bad model response is diagnosable from the Notion row.\n  parseError = e.message;\n  scores = [];\n}\n\n// Index sometimes comes back as a string (e.g. '\"index\": \"0\"') - coerce to\n// Number before keying, or the Map lookup below silently never matches.\nconst byIndex = new Map(scores.map(s => [Number(s.index), s]));\n\nconst scored = jobs.map((j, i) => {\n  const s = byIndex.get(i);\n  const top = j.salaryMax ?? j.salaryMin ?? 0;\n  let band = 'Unknown';\n  if (top >= cfg.salaryTarget) band = 'Target (100k+)';\n  else if (top >= cfg.salaryFloor) band = 'Viable (80-100k)';\n  else if (top > 0) band = 'Below floor';\n\n  // Salary band nudges the ranking but never replaces fit - a perfect role at\n  // 95k should still outrank a poor one at 120k.\n  const bandBonus = band === 'Target (100k+)' ? 5 : 0;\n\n  const reason = s?.reason\n    ?? (parseError\n      ? `Model response could not be parsed (${parseError}): ${raw.slice(0, 200)}`\n      : (scores.length === 0 ? `Model returned no scores at all: ${raw.slice(0, 200)}` : 'Model did not return a score for this job'));\n\n  return {\n    ...j,\n    score: Math.min(100, (s?.score ?? 0) + bandBonus),\n    reason,\n    salaryBand: band,\n  };\n});\n\nscored.sort((a, b) => b.score - a.score);\nreturn scored.map(json => ({ json }));"
       },
       "id": "rank",
       "name": "Rank and band",
@@ -339,7 +318,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Build the digest from the ranked list, not from the Notion write results,\n// so a Notion hiccup still gets you the email.\nconst jobs = $('Rank and band').all().map(i => i.json);\nif (jobs.length === 0) return [];\n\nconst row = j => `<tr>\n  <td style=\"padding:8px;border-bottom:1px solid #eee\"><b>${j.score}</b></td>\n  <td style=\"padding:8px;border-bottom:1px solid #eee\"><a href=\"${j.url}\">${j.title}</a><br><small>${j.company} - ${j.location}</small></td>\n  <td style=\"padding:8px;border-bottom:1px solid #eee\">${j.salaryBand}<br><small>${j.salaryMin ?? '?'} - ${j.salaryMax ?? '?'}</small></td>\n  <td style=\"padding:8px;border-bottom:1px solid #eee\"><small>${j.reason}</small></td>\n</tr>`;\n\nconst html = `<h2>${jobs.length} new role${jobs.length === 1 ? '' : 's'} today</h2>\n<table style=\"border-collapse:collapse;font-family:sans-serif;font-size:14px\">\n<tr><th align=\"left\">Score</th><th align=\"left\">Role</th><th align=\"left\">Salary</th><th align=\"left\">Why</th></tr>\n${jobs.map(row).join('')}\n</table>`;\n\nreturn [{ json: { html, count: jobs.length } }];"
+        "jsCode": "// Build the digest from the ranked list, not from the Notion write results,\n// so a Notion hiccup still gets you the email.\nconst MAX_IN_EMAIL = 20;\n\nconst jobs = $('Rank and band').all().map(i => i.json);\nif (jobs.length === 0) return [];\n\n// Cap what the email shows. The list is already sorted best-first, so this\n// keeps the top matches readable on a busy day - everything is still written\n// to Notion regardless, which is where the full list lives.\nconst shown = jobs.slice(0, MAX_IN_EMAIL);\nconst hidden = jobs.length - shown.length;\n\nconst row = j => `<tr>\n  <td style=\"padding:8px;border-bottom:1px solid #eee\"><b>${j.score}</b></td>\n  <td style=\"padding:8px;border-bottom:1px solid #eee\"><a href=\"${j.url}\">${j.title}</a><br><small>${j.company} - ${j.location}</small></td>\n  <td style=\"padding:8px;border-bottom:1px solid #eee\">${j.salaryBand}<br><small>${j.salaryMin ?? '?'} - ${j.salaryMax ?? '?'}</small></td>\n  <td style=\"padding:8px;border-bottom:1px solid #eee\"><small>${j.reason}</small></td>\n</tr>`;\n\nconst heading = hidden > 0\n  ? `${jobs.length} new roles today - top ${shown.length} shown`\n  : `${jobs.length} new role${jobs.length === 1 ? '' : 's'} today`;\n\nconst footer = hidden > 0\n  ? `<p><small>${hidden} more in Notion.</small></p>`\n  : '';\n\nconst html = `<h2>${heading}</h2>\n<table style=\"border-collapse:collapse;font-family:sans-serif;font-size:14px\">\n<tr><th align=\"left\">Score</th><th align=\"left\">Role</th><th align=\"left\">Salary</th><th align=\"left\">Why</th></tr>\n${shown.map(row).join('')}\n</table>\n${footer}`;\n\nreturn [{ json: { html, count: jobs.length } }];"
       },
       "id": "build-email",
       "name": "Build digest",
@@ -349,18 +328,34 @@
     },
     {
       "parameters": {
-        "sendTo": "={{ $env.DIGEST_EMAIL_TO }}",
-        "subject": "={{ $json.count }} new job match{{ $json.count === 1 ? '' : 'es' }}",
-        "emailFormat": "html",
-        "html": "={{ $json.html }}",
-        "options": {}
+        "method": "POST",
+        "url": "https://api.resend.com/emails",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.RESEND_API_KEY }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ from: 'Job Search Agent <onboarding@resend.dev>', to: [$env.DIGEST_EMAIL_TO], subject: `${$json.count} new job match${$json.count === 1 ? '' : 'es'}`, html: $json.html }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
       },
       "id": "email",
-      "name": "Email digest",
-      "type": "n8n-nodes-base.emailSend",
-      "typeVersion": 2.1,
+      "name": "Send digest (Resend)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
       "position": [2180, 300],
-      "notes": "Needs SMTP credentials set up in n8n. Gmail: use an app password, not your account password."
+      "notes": "onboarding@resend.dev has no verified domain, so it can only send to the email address your Resend account is registered under. That's fine here since DIGEST_EMAIL_TO is yourself."
     }
   ],
   "connections": {
@@ -413,7 +408,7 @@
       "main": [[{ "node": "Build digest", "type": "main", "index": 0 }]]
     },
     "Build digest": {
-      "main": [[{ "node": "Email digest", "type": "main", "index": 0 }]]
+      "main": [[{ "node": "Send digest (Resend)", "type": "main", "index": 0 }]]
     }
   },
   "settings": {

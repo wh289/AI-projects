@@ -19,6 +19,8 @@ services:
       - N8N_BLOCK_ENV_ACCESS_IN_NODE=false
       # Lets Code nodes require() nothing external - keeps the workflow portable
       - NODE_FUNCTION_ALLOW_BUILTIN=crypto
+      # n8n blocks filesystem nodes from reading paths outside this allow-list
+      - N8N_RESTRICT_FILE_ACCESS_TO=/cv
     env_file:
       - .env
     volumes:

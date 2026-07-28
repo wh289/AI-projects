@@ -1,4 +1,5 @@
 {
+  "id": "LiUq5PwukDjoPlSU",
   "name": "Job Search - Weekly Digest",
   "nodes": [
     {
@@ -67,7 +68,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const { jobs, count } = $input.first().json;\nconst target = jobs.filter(j => j.salaryBand === 'Target (100k+)');\n\nconst row = j => `<tr>\n  <td style=\"padding:8px;border-bottom:1px solid #eee\"><b>${j.score}</b></td>\n  <td style=\"padding:8px;border-bottom:1px solid #eee\"><a href=\"${j.url}\">${j.title}</a><br><small>${j.company} - ${j.location} - ${j.source}</small></td>\n  <td style=\"padding:8px;border-bottom:1px solid #eee\">${j.salaryBand}<br><small>${j.salaryMin ?? '?'} - ${j.salaryMax ?? '?'}</small></td>\n  <td style=\"padding:8px;border-bottom:1px solid #eee\"><small>${j.reason}</small></td>\n</tr>`;\n\nconst html = `<h2>This week: ${count} role${count === 1 ? '' : 's'}</h2>\n<p>${target.length} in the 100k+ band.</p>\n<table style=\"border-collapse:collapse;font-family:sans-serif;font-size:14px\">\n<tr><th align=\"left\">Score</th><th align=\"left\">Role</th><th align=\"left\">Salary</th><th align=\"left\">Why</th></tr>\n${jobs.map(row).join('')}\n</table>`;\n\nreturn [{ json: { html, count } }];"
+        "jsCode": "// Same cap as the daily digest - a week's worth is long, and the list is\n// already sorted best-first by the Notion query. Everything stays in Notion.\nconst MAX_IN_EMAIL = 20;\n\nconst { jobs, count } = $input.first().json;\nconst target = jobs.filter(j => j.salaryBand === 'Target (100k+)');\n\nconst shown = jobs.slice(0, MAX_IN_EMAIL);\nconst hidden = jobs.length - shown.length;\n\nconst row = j => `<tr>\n  <td style=\"padding:8px;border-bottom:1px solid #eee\"><b>${j.score}</b></td>\n  <td style=\"padding:8px;border-bottom:1px solid #eee\"><a href=\"${j.url}\">${j.title}</a><br><small>${j.company} - ${j.location} - ${j.source}</small></td>\n  <td style=\"padding:8px;border-bottom:1px solid #eee\">${j.salaryBand}<br><small>${j.salaryMin ?? '?'} - ${j.salaryMax ?? '?'}</small></td>\n  <td style=\"padding:8px;border-bottom:1px solid #eee\"><small>${j.reason}</small></td>\n</tr>`;\n\nconst heading = hidden > 0\n  ? `This week: ${count} roles - top ${shown.length} shown`\n  : `This week: ${count} role${count === 1 ? '' : 's'}`;\n\nconst footer = hidden > 0\n  ? `<p><small>${hidden} more in Notion.</small></p>`\n  : '';\n\nconst html = `<h2>${heading}</h2>\n<p>${target.length} in the 100k+ band.</p>\n<table style=\"border-collapse:collapse;font-family:sans-serif;font-size:14px\">\n<tr><th align=\"left\">Score</th><th align=\"left\">Role</th><th align=\"left\">Salary</th><th align=\"left\">Why</th></tr>\n${shown.map(row).join('')}\n</table>\n${footer}`;\n\nreturn [{ json: { html, count } }];"
       },
       "id": "build-weekly",
       "name": "Build weekly digest",
@@ -77,17 +78,34 @@
     },
     {
       "parameters": {
-        "sendTo": "={{ $env.DIGEST_EMAIL_TO }}",
-        "subject": "=Weekly job round-up: {{ $json.count }} roles",
-        "emailFormat": "html",
-        "html": "={{ $json.html }}",
-        "options": {}
+        "method": "POST",
+        "url": "https://api.resend.com/emails",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.RESEND_API_KEY }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ from: 'Job Search Agent <onboarding@resend.dev>', to: [$env.DIGEST_EMAIL_TO], subject: `Weekly job round-up: ${$json.count} roles`, html: $json.html }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
       },
       "id": "email-weekly",
-      "name": "Email weekly digest",
-      "type": "n8n-nodes-base.emailSend",
-      "typeVersion": 2.1,
-      "position": [480, 300]
+      "name": "Send weekly digest (Resend)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [480, 300],
+      "notes": "onboarding@resend.dev has no verified domain, so it can only send to the email address your Resend account is registered under. That's fine here since DIGEST_EMAIL_TO is yourself."
     }
   ],
   "connections": {
@@ -101,7 +119,7 @@
       "main": [[{ "node": "Build weekly digest", "type": "main", "index": 0 }]]
     },
     "Build weekly digest": {
-      "main": [[{ "node": "Email weekly digest", "type": "main", "index": 0 }]]
+      "main": [[{ "node": "Send weekly digest (Resend)", "type": "main", "index": 0 }]]
     }
   },
   "settings": {
