@@ -7,8 +7,7 @@ with Claude, store them in Notion, and email you digests.
   what is new.
 - **Weekly** — Monday round-up of everything stored in the last 7 days.
 
-Notion is both the store and the memory: the daily run queries it *before*
-scoring, which is what makes "only new jobs" work without any separate state.
+Notion is both the store and the memory at this stage, something like duckdb may be a better use case here.
 
 ---
 
@@ -64,7 +63,7 @@ value that looks correct in `.env`. Same applies to any change to
 ### 3. Create the Notion database
 
 Make a new database with **exactly** these property names — the workflows write
-to them by name, so a typo means a silent failure:
+to them by name
 
 | Property | Type |
 |----------|------|
@@ -81,8 +80,7 @@ to them by name, so a typo means a silent failure:
 | Why | Text |
 
 Then **share the database with your integration**: open the DB → `···` →
-*Connections* → add the integration you created. Skipping this is the single
-most common reason Notion writes fail with a 404.
+*Connections* → add the integration you created.
 
 ### 4. Add your CV
 
@@ -121,8 +119,6 @@ account is registered under — so `DIGEST_EMAIL_TO` must be that same address.
 ### 7. Test before scheduling
 
 Open the daily workflow and click **Execute Workflow** to run it once manually.
-Check each node's output as it goes. When it looks right, toggle the workflow
-**Active** — only then does the schedule start firing.
 
 ---
 
@@ -138,8 +134,7 @@ Scoring bands:
 - `Below floor` / `Unknown` — stored but ranked last
 
 The bonus is deliberately small: a strong match at 95k should still outrank a
-weak one at 120k. If that is the wrong trade-off for you, it's one number in
-the *Rank and band* node.
+weak one at 120k.
 
 Both emails show at most 20 roles (`MAX_IN_EMAIL` at the top of the *Build
 digest* / *Build weekly digest* nodes), with a "N more in Notion" footer when
@@ -183,7 +178,7 @@ entries, which reintroduces duplicates as "new."
 - **Notion as the memory store, not a real database.** The daily run queries
   it *before* scoring specifically so "new jobs only" needs no separate state
   file — Notion already is the state. The cost is that every run does a full
-  paginated scan of the whole table; fine at hundreds of rows, would want a
+  paginated scan of the whole table; fine for first draft would want a
   smarter filter (e.g. only rows from the last N days) at much larger scale.
 - **One batched scoring call, not one call per job.** Cheaper, and the model
   can rank jobs consistently against each other when it sees them together
