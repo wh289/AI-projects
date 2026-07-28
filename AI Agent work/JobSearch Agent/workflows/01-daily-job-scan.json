@@ -1,4 +1,5 @@
 {
+  "id": "7UrHOBb5mdhlnnmY",
   "name": "Job Search - Daily Scan",
   "nodes": [
     {
@@ -278,7 +279,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ model: 'claude-sonnet-5', max_tokens: 4096, messages: [{ role: 'user', content: $json.prompt }] }) }}",
+        "jsonBody": "={{ JSON.stringify({ model: 'claude-opus-5', max_tokens: 4096, messages: [{ role: 'user', content: $json.prompt }] }) }}",
         "options": {
           "response": {
             "response": {
