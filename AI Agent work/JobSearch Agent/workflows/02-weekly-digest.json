@@ -78,17 +78,34 @@
     },
     {
       "parameters": {
-        "sendTo": "={{ $env.DIGEST_EMAIL_TO }}",
-        "subject": "=Weekly job round-up: {{ $json.count }} roles",
-        "emailFormat": "html",
-        "html": "={{ $json.html }}",
-        "options": {}
+        "method": "POST",
+        "url": "https://api.resend.com/emails",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.RESEND_API_KEY }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ from: 'Job Search Agent <onboarding@resend.dev>', to: [$env.DIGEST_EMAIL_TO], subject: `Weekly job round-up: ${$json.count} roles`, html: $json.html }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
       },
       "id": "email-weekly",
-      "name": "Email weekly digest",
-      "type": "n8n-nodes-base.emailSend",
-      "typeVersion": 2.1,
-      "position": [480, 300]
+      "name": "Send weekly digest (Resend)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [480, 300],
+      "notes": "onboarding@resend.dev has no verified domain, so it can only send to the email address your Resend account is registered under. That's fine here since DIGEST_EMAIL_TO is yourself."
     }
   ],
   "connections": {
@@ -102,7 +119,7 @@
       "main": [[{ "node": "Build weekly digest", "type": "main", "index": 0 }]]
     },
     "Build weekly digest": {
-      "main": [[{ "node": "Email weekly digest", "type": "main", "index": 0 }]]
+      "main": [[{ "node": "Send weekly digest (Resend)", "type": "main", "index": 0 }]]
     }
   },
   "settings": {

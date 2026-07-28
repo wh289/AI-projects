@@ -94,13 +94,18 @@ In n8n: **Workflows → ⋯ → Import from File**, once per file in `workflows/
 
 ### 6. Credentials inside n8n
 
-Two things can't come from `.env` and must be set in the n8n UI:
+One thing can't come from `.env` and must be set in the n8n UI:
 
 - **Reed** — on the *Reed API* node, create a Basic Auth credential:
   username = your Reed API key, password = leave blank.
-- **Email** — on the *Email digest* node, create an SMTP credential.
-  For Gmail use an [app password](https://myaccount.google.com/apppasswords),
-  not your normal password.
+
+Email goes through [Resend](https://resend.com/api-keys) via a plain HTTP
+request (`RESEND_API_KEY` in `.env`) rather than SMTP — both Gmail and
+Outlook now block basic-auth SMTP logins (app passwords included) on most
+accounts, which makes the standard n8n Email node a dead end for personal
+use. Resend's free tier needs no domain verification, but its default sender
+(`onboarding@resend.dev`) can only deliver to the email address your Resend
+account is registered under — so `DIGEST_EMAIL_TO` must be that same address.
 
 ### 7. Test before scheduling
 
