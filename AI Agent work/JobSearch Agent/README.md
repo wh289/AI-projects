@@ -1,6 +1,6 @@
 # Job Search Agent (n8n)
 
-Two scheduled n8n workflows that pull job listings, score them against your CV
+Two scheduled n8n workflows that pull job listings, score them against an uploaded CV
 with Claude, store them in Notion, and email you digests.
 
 - **Daily** — fetch, drop anything already in Notion, score the rest, email only
